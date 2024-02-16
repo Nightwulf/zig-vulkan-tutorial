@@ -18,7 +18,11 @@ const InitError = error{
 const Globals = struct {
     window: *sdl.SDL_Window,
     instance: vk.VkInstance,
+    physical_device: vk.VkPhysicalDevice,
 };
+
+var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+var allocator = arena.allocator();
 
 pub fn main() !void {
     const globals = try init();
@@ -26,6 +30,7 @@ pub fn main() !void {
     _ = sdl.SDL_Delay(5000);
 
     cleanup(globals);
+    arena.deinit();
 }
 
 fn init() !Globals {
@@ -68,7 +73,47 @@ fn init() !Globals {
     if (result != vk.VK_SUCCESS) {
         return InitError.VulkanError;
     }
-    return Globals{ .window = window, .instance = instance };
+
+    var physical_device: vk.VkPhysicalDevice = undefined;
+    var device_count: u32 = 0;
+    const phys_devices_rs = vk.vkEnumeratePhysicalDevices(instance, &device_count, null);
+    if (phys_devices_rs != vk.VK_SUCCESS or device_count == 0) {
+        return InitError.VulkanError;
+    }
+
+    const device_list: []vk.VkPhysicalDevice = try allocator.alloc(vk.VkPhysicalDevice, device_count);
+    _ = vk.vkEnumeratePhysicalDevices(instance, &device_count, device_list.ptr);
+
+    for (device_list) |device| {
+        var deviceProperties: vk.VkPhysicalDeviceProperties = undefined;
+        var deviceFeatures: vk.VkPhysicalDeviceFeatures = undefined;
+
+        vk.vkGetPhysicalDeviceProperties(device, &deviceProperties);
+        vk.vkGetPhysicalDeviceFeatures(device, &deviceFeatures);
+        if (deviceProperties.deviceType == vk.VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU and deviceFeatures.geometryShader != 0) {
+            physical_device = device;
+        }
+    }
+
+    if (physical_device == undefined) {
+        return InitError.VulkanError;
+    }
+
+    var queue_family_count: u32 = 0;
+    vk.vkGetPhysicalDeviceQueueFamilyProperties(physical_device, &queue_family_count, null);
+    const queue_families: []vk.VkQueueFamilyProperties = try allocator.alloc(vk.VkQueueFamilyProperties, queue_family_count);
+    vk.vkGetPhysicalDeviceQueueFamilyProperties(physical_device, &queue_family_count, queue_families.ptr);
+
+    // continue here with queue families!
+
+    var family_idx: u32 = 0;
+    for (queue_families) |family| {
+        if (family.queueFlags & vk.VK_QUEUE_GRAPHICS_BIT) {
+            family_idx = 
+        }
+    }
+
+    return Globals{ .window = window, .instance = instance, .physical_device = physical_device };
 }
 
 fn cleanup(globals: Globals) void {
