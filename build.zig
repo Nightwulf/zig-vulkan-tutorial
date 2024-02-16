@@ -12,5 +12,7 @@ pub fn build(b: *std.Build) void {
     });
     exe.linkSystemLibrary("c");
     exe.linkSystemLibrary("SDL2");
+    exe.linkSystemLibrary("vulkan");
+    exe.linkSystemLibrary("glm");
     b.installArtifact(exe);
 }

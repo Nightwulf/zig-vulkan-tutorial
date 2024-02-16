@@ -6,3 +6,5 @@
 
 
         
+- REMINDERS:
+	- do environment variables mentioned in vulkan tutorial (setup chapter) really matter?
