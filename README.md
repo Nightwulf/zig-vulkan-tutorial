@@ -13,4 +13,5 @@ zigvulkan is a project for testing out dealing with the Vulkan 3D library using 
 ## Restrictions
 
 - well none, since it is a playground ;-)
+- CI builds don't work with dynamic because there is a problem linking dynamically on RISC-V
 
