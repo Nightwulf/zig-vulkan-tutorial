@@ -11,11 +11,21 @@ const InitError = error{
     SDLError,
 };
 
+const QueueType = enum {
+    Graphics,
+    Presentation,
+};
+
+const QueueIndices = struct {
+    type: QueueType,
+    idx: u32,
+};
+
 const Globals = struct {
     window: *gfx.SDL_Window,
     instance: gfx.VkInstance,
     physical_device: gfx.VkPhysicalDevice,
-    graphics_family_idx: u32,
+    queue_indices: []QueueIndices,
     device: gfx.VkDevice,
     graphics_queue: gfx.VkQueue,
     surface: gfx.VkSurfaceKHR,
@@ -75,37 +85,45 @@ fn init() !Globals {
         return InitError.VulkanError;
     }
 
-    const physical_device = try selectPhysicalDevice(instance);
-
-    const graphical_index = try findQueueFamilies(physical_device);
-
-    const device = try createLogicalDevice(physical_device, graphical_index);
-
-    var queue: gfx.VkQueue = undefined;
-    gfx.vkGetDeviceQueue(device, graphical_index, 0, &queue);
-
     var surface: gfx.VkSurfaceKHR = undefined;
     if (gfx.SDL_Vulkan_CreateSurface(window, instance, &surface) != gfx.VK_SUCCESS) {
         return InitError.VulkanError;
     }
 
-    const present_idx = try getPresentFamilyIndex(physical_device, surface, graphical_index);
+    const physical_device = try selectPhysicalDevice(instance);
 
-    return Globals{ .window = window, .instance = instance, .physical_device = physical_device, .graphics_family_idx = graphical_index, .device = device, .graphics_queue = queue, .surface = surface, .present_family_index = present_idx };
+    const queue_indices = try findQueueFamilies(physical_device, surface);
+
+    const device = try createLogicalDevice(physical_device, queue_indices);
+
+    var queue: gfx.VkQueue = undefined;
+    gfx.vkGetDeviceQueue(device, getIndexForFamily(queue_indices, QueueType.Graphics), 0, &queue);
+
+    const present_idx = try getPresentFamilyIndex(physical_device, surface, getIndexForFamily(queue_indices, QueueType.Graphics));
+
+    return Globals{ .window = window, .instance = instance, .physical_device = physical_device, .queue_indices = queue_indices, .device = device, .graphics_queue = queue, .surface = surface, .present_family_index = present_idx };
 }
 
-fn createLogicalDevice(physical_device: gfx.VkPhysicalDevice, graphical_index: u32) !gfx.VkDevice {
+fn createLogicalDevice(physical_device: gfx.VkPhysicalDevice, queue_indices: []QueueIndices) !gfx.VkDevice {
+    const unique_queue_families: []u32 = try allocator.alloc(u32, queue_indices.len);
+    for (queue_indices, 0..) |idx, i| {
+        unique_queue_families[i] = idx.idx;
+    }
+    var queue_create_infos = std.ArrayList(gfx.VkDeviceQueueCreateInfo).init(allocator);
     var queue_priority: f32 = 1.0;
-    var queue_create_info = gfx.VkDeviceQueueCreateInfo{
-        .sType = gfx.VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
-        .queueFamilyIndex = graphical_index,
-        .queueCount = 1,
-        .pQueuePriorities = &queue_priority,
-    };
+    for (unique_queue_families) |idx| {
+        const queue_create_info = gfx.VkDeviceQueueCreateInfo{
+            .sType = gfx.VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
+            .queueFamilyIndex = idx,
+            .queueCount = 1,
+            .pQueuePriorities = &queue_priority,
+        };
+        try queue_create_infos.append(queue_create_info);
+    }
     var createInfo = gfx.VkDeviceCreateInfo{
         .sType = gfx.VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
-        .pQueueCreateInfos = &queue_create_info,
-        .queueCreateInfoCount = 1,
+        .pQueueCreateInfos = queue_create_infos.items.ptr,
+        .queueCreateInfoCount = @intCast(queue_create_infos.items.len),
         .pEnabledFeatures = &gfx.VkPhysicalDeviceFeatures{},
         .enabledLayerCount = 0,
     };
@@ -116,22 +134,39 @@ fn createLogicalDevice(physical_device: gfx.VkPhysicalDevice, graphical_index: u
     return device;
 }
 
-fn findQueueFamilies(physical_device: gfx.VkPhysicalDevice) !u32 {
+fn findQueueFamilies(physical_device: gfx.VkPhysicalDevice, surface: gfx.VkSurfaceKHR) ![]QueueIndices {
+    var queue_indices = [_]QueueIndices{
+        QueueIndices{ .idx = 0, .type = QueueType.Graphics },
+        QueueIndices{ .idx = 0, .type = QueueType.Presentation },
+    };
     var queue_family_count: u32 = 0;
     gfx.vkGetPhysicalDeviceQueueFamilyProperties(physical_device, &queue_family_count, null);
     const queue_families: []gfx.VkQueueFamilyProperties = try allocator.alloc(gfx.VkQueueFamilyProperties, queue_family_count);
     gfx.vkGetPhysicalDeviceQueueFamilyProperties(physical_device, &queue_family_count, queue_families.ptr);
 
-    // continue here with queue families!
-
-    var family_idx: u32 = 0;
+    var found_gfx = false;
+    var found_present = false;
+    var idx: u32 = 0;
     for (queue_families) |family| {
         if (family.queueFlags & gfx.VK_QUEUE_GRAPHICS_BIT != 0) {
-            return family_idx;
+            found_gfx = true;
+            queue_indices[0].idx = idx;
         }
-        family_idx += 1;
+        var present_support: gfx.VkBool32 = gfx.VK_FALSE;
+        const rs = gfx.vkGetPhysicalDeviceSurfaceSupportKHR(physical_device, idx, surface, &present_support);
+        if (present_support == gfx.VK_TRUE) {
+            found_present = true;
+            queue_indices[1].idx = idx;
+        }
+        if (rs != gfx.VK_SUCCESS) {
+            std.debug.print("rs: {d}\n", .{rs});
+        }
+        idx += 1;
     }
-    return InitError.VulkanError;
+    if (!found_gfx or !found_present) {
+        return InitError.VulkanError;
+    }
+    return &queue_indices;
 }
 
 fn getPresentFamilyIndex(device: gfx.VkPhysicalDevice, surface: gfx.VkSurfaceKHR, graphical_idx: u32) !u32 {
@@ -180,4 +215,15 @@ fn cleanup(globals: Globals) void {
     // cleanup SDL
     gfx.SDL_DestroyWindow(globals.window);
     gfx.SDL_Quit();
+}
+
+// helpers
+
+fn getIndexForFamily(q: []QueueIndices, f: QueueType) u32 {
+    for (q) |qi| {
+        if (qi.type == f) {
+            return qi.idx;
+        }
+    }
+    return 0;
 }
