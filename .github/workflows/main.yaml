@@ -1,0 +1,10 @@
+name: BUILD
+on: push
+
+jobs:
+  test:
+    runs-on: ziglings/ziglang
+    steps:
+    - uses: actions/checkout@v2
+    - uses: actions/setup-node@v1
+    - run: zig build
