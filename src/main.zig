@@ -79,13 +79,20 @@ fn init() !Globals {
         std.debug.print("{s}\n", .{extension});
     }
 
+    const validationLayers = [_][*:0]const u8{"VK_LAYER_LUNARG_standard_validation"};
+
     const create_info = gfx.VkInstanceCreateInfo{
         .sType = gfx.VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO,
         .pApplicationInfo = &app_info,
+        .enabledLayerCount = 1,
+        .ppEnabledLayerNames = &validationLayers,
         .enabledExtensionCount = sdl_extension_count,
         .ppEnabledExtensionNames = extension_names.ptr,
     };
 
+    // TODO: add callback for Vulkan debug messages!
+
+    _ = gfx.SDL_Vulkan_GetInstanceExtensions(window, &sdl_extension_count, null);
     var instance: gfx.VkInstance = undefined;
     const result = gfx.vkCreateInstance(&create_info, null, &instance);
     if (result != gfx.VK_SUCCESS) {
