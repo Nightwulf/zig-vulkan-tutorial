@@ -68,15 +68,22 @@ fn init() !Globals {
     };
 
     var sdl_extension_count: u32 = 0;
-    var sdl_extensions: [*c]const u8 = null;
 
-    _ = gfx.SDL_Vulkan_GetInstanceExtensions(window, &sdl_extension_count, &sdl_extensions);
+    _ = gfx.SDL_Vulkan_GetInstanceExtensions(window, &sdl_extension_count, null);
+
+    const extension_names = try allocator.alloc([*c]const u8, sdl_extension_count);
+    _ = gfx.SDL_Vulkan_GetInstanceExtensions(window, &sdl_extension_count, extension_names.ptr);
+
+    std.debug.print("SDL-Vulkan-Extensions:\n", .{});
+    for (extension_names) |extension| {
+        std.debug.print("{s}\n", .{extension});
+    }
 
     const create_info = gfx.VkInstanceCreateInfo{
         .sType = gfx.VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO,
         .pApplicationInfo = &app_info,
         .enabledExtensionCount = sdl_extension_count,
-        .ppEnabledExtensionNames = &sdl_extensions,
+        .ppEnabledExtensionNames = extension_names.ptr,
     };
 
     var instance: gfx.VkInstance = undefined;
@@ -87,6 +94,7 @@ fn init() !Globals {
 
     var surface: gfx.VkSurfaceKHR = undefined;
     if (gfx.SDL_Vulkan_CreateSurface(window, instance, &surface) != gfx.VK_SUCCESS) {
+        std.debug.print("Error: {s}\n", .{gfx.SDL_GetError()});
         return InitError.VulkanError;
     }
 
