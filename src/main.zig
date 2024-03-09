@@ -30,7 +30,10 @@ const Globals = struct {
     graphics_queue: gfx.VkQueue,
     surface: gfx.VkSurfaceKHR,
     present_family_index: u32,
+    debugMessenger: gfx.VkDebugUtilsMessengerEXT,
 };
+
+const enableDebugCallback: bool = false;
 
 var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
 var allocator = arena.allocator();
@@ -81,22 +84,39 @@ fn init() !Globals {
 
     const validationLayers = [_][*:0]const u8{"VK_LAYER_LUNARG_standard_validation"};
 
-    const create_info = gfx.VkInstanceCreateInfo{
+    var create_info = gfx.VkInstanceCreateInfo{
         .sType = gfx.VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO,
         .pApplicationInfo = &app_info,
-        .enabledLayerCount = 1,
+
         .ppEnabledLayerNames = &validationLayers,
         .enabledExtensionCount = sdl_extension_count,
         .ppEnabledExtensionNames = extension_names.ptr,
     };
 
-    // TODO: add callback for Vulkan debug messages!
+    if (enableDebugCallback) {
+        create_info.enabledLayerCount = 1;
+        create_info.ppEnabledLayerNames = &validationLayers;
+    }
 
     _ = gfx.SDL_Vulkan_GetInstanceExtensions(window, &sdl_extension_count, null);
     var instance: gfx.VkInstance = undefined;
     const result = gfx.vkCreateInstance(&create_info, null, &instance);
     if (result != gfx.VK_SUCCESS) {
         return InitError.VulkanError;
+    }
+
+    if (enableDebugCallback) {
+        const debug_messenger_create_info = gfx.VkDebugUtilsMessengerCreateInfoEXT{
+            .sType = gfx.VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT,
+            .messageSeverity = gfx.VK_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT | gfx.VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT | gfx.VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT,
+            .messageType = gfx.VK_DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT | gfx.VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT | gfx.VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT,
+            .pfnUserCallback = debugCallback,
+            .pUserData = null,
+        };
+        var debugMessenger: gfx.VkDebugUtilsMessengerEXT = undefined;
+        if (createDebugUtilsMessengerExt(instance, &debug_messenger_create_info, &debugMessenger) != gfx.VK_SUCCESS) {
+            return InitError.VulkanError;
+        }
     }
 
     var surface: gfx.VkSurfaceKHR = undefined;
@@ -116,7 +136,7 @@ fn init() !Globals {
 
     const present_idx = try getPresentFamilyIndex(physical_device, surface, getIndexForFamily(queue_indices, QueueType.Graphics));
 
-    return Globals{ .window = window, .instance = instance, .physical_device = physical_device, .queue_indices = queue_indices, .device = device, .graphics_queue = queue, .surface = surface, .present_family_index = present_idx };
+    return Globals{ .window = window, .instance = instance, .physical_device = physical_device, .queue_indices = queue_indices, .device = device, .graphics_queue = queue, .surface = surface, .present_family_index = present_idx, .debugMessenger = undefined };
 }
 
 fn createLogicalDevice(physical_device: gfx.VkPhysicalDevice, queue_indices: []QueueIndices) !gfx.VkDevice {
@@ -219,6 +239,23 @@ fn selectPhysicalDevice(instance: gfx.VkInstance) !gfx.VkPhysicalDevice {
         return InitError.VulkanError;
     }
     return physical_device;
+}
+
+fn debugCallback(messageSeverity: gfx.VkDebugUtilsMessageSeverityFlagBitsEXT, messageType: gfx.VkDebugUtilsMessageTypeFlagsEXT, pCallbackData: [*c]const gfx.VkDebugUtilsMessengerCallbackDataEXT, pUserData: ?*anyopaque) callconv(.C) gfx.VkBool32 {
+    std.debug.print("validation layer: {s}\n", .{pCallbackData.*.pMessage});
+    _ = messageSeverity;
+    _ = messageType;
+    _ = pUserData;
+    return gfx.VK_FALSE;
+}
+
+fn createDebugUtilsMessengerExt(instance: gfx.VkInstance, pCreateInfo: *const gfx.VkDebugUtilsMessengerCreateInfoEXT, pDebugMessenger: *gfx.VkDebugUtilsMessengerEXT) gfx.VkResult {
+    const f = gfx.vkGetInstanceProcAddr(instance, "vkCreateDebugUtilsMessengerEXT");
+    const cDbgFn: gfx.PFN_vkCreateDebugUtilsMessengerEXT = @ptrCast(f);
+    if (cDbgFn) |dbgFn| {
+        return dbgFn(instance, pCreateInfo, null, pDebugMessenger);
+    }
+    return gfx.VK_ERROR_EXTENSION_NOT_PRESENT;
 }
 
 fn cleanup(globals: Globals) void {
