@@ -87,8 +87,8 @@ fn init() !Globals {
     var create_info = gfx.VkInstanceCreateInfo{
         .sType = gfx.VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO,
         .pApplicationInfo = &app_info,
-
-        .ppEnabledLayerNames = &validationLayers,
+        .enabledLayerCount = 0,
+        .ppEnabledLayerNames = null,
         .enabledExtensionCount = sdl_extension_count,
         .ppEnabledExtensionNames = extension_names.ptr,
     };
@@ -120,8 +120,9 @@ fn init() !Globals {
     }
 
     var surface: gfx.VkSurfaceKHR = undefined;
-    if (gfx.SDL_Vulkan_CreateSurface(window, instance, &surface) != gfx.VK_SUCCESS) {
-        std.debug.print("Error: {s}\n", .{gfx.SDL_GetError()});
+    if (gfx.SDL_Vulkan_CreateSurface(window, instance, &surface) != gfx.SDL_TRUE) {
+        const sdl_err = gfx.SDL_GetError();
+        std.debug.print("Error: {s}\n", .{sdl_err});
         return InitError.VulkanError;
     }
 
@@ -258,11 +259,20 @@ fn createDebugUtilsMessengerExt(instance: gfx.VkInstance, pCreateInfo: *const gf
     return gfx.VK_ERROR_EXTENSION_NOT_PRESENT;
 }
 
+fn DestroyDebugUtilMessengerExt(instance: gfx.VkInstance, callback: gfx.VkDebugUtilsMessengerEXT) void {
+    const destroy_func = gfx.vkGetInstanceProcAddr(instance, "vkDestroyDebugReportCallbackEXT");
+    const func: gfx.PFN_vkDestroyDebugReportCallbackEXT = @ptrCast(destroy_func);
+    func(instance, callback, null);
+}
+
 fn cleanup(globals: Globals) void {
     // cleanup vulkan
+    gfx.vkDestroyDevice(globals.device, null);
+    if (enableDebugCallback) {
+        DestroyDebugUtilMessengerExt(globals.instance, globals.debugMessenger);
+    }
     gfx.vkDestroySurfaceKHR(globals.instance, globals.surface, null);
     gfx.vkDestroyInstance(globals.instance, null);
-    gfx.vkDestroyDevice(globals.device, null);
 
     // cleanup SDL
     gfx.SDL_DestroyWindow(globals.window);
