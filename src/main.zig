@@ -239,12 +239,7 @@ fn selectPhysicalDevice(instance: gfx.VkInstance) !gfx.VkPhysicalDevice {
     _ = gfx.vkEnumeratePhysicalDevices(instance, &device_count, device_list.ptr);
 
     for (device_list) |device| {
-        var deviceProperties: gfx.VkPhysicalDeviceProperties = undefined;
-        var deviceFeatures: gfx.VkPhysicalDeviceFeatures = undefined;
-
-        gfx.vkGetPhysicalDeviceProperties(device, &deviceProperties);
-        gfx.vkGetPhysicalDeviceFeatures(device, &deviceFeatures);
-        if (deviceProperties.deviceType == gfx.VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU and deviceFeatures.geometryShader != 0) {
+        if (isDeviceSuitable(device)) {
             physical_device = device;
         }
     }
@@ -253,6 +248,18 @@ fn selectPhysicalDevice(instance: gfx.VkInstance) !gfx.VkPhysicalDevice {
         return InitError.VulkanError;
     }
     return physical_device;
+}
+
+fn isDeviceSuitable(device: gfx.VkPhysicalDevice) bool {
+    var deviceProperties: gfx.VkPhysicalDeviceProperties = undefined;
+    var deviceFeatures: gfx.VkPhysicalDeviceFeatures = undefined;
+
+    gfx.vkGetPhysicalDeviceProperties(device, &deviceProperties);
+    gfx.vkGetPhysicalDeviceFeatures(device, &deviceFeatures);
+    if (deviceProperties.deviceType == gfx.VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU and deviceFeatures.geometryShader != 0) {
+        return true;
+    }
+    return false;
 }
 
 fn debugCallback(messageSeverity: gfx.VkDebugUtilsMessageSeverityFlagBitsEXT, messageType: gfx.VkDebugUtilsMessageTypeFlagsEXT, pCallbackData: [*c]const gfx.VkDebugUtilsMessengerCallbackDataEXT, pUserData: ?*anyopaque) callconv(.C) gfx.VkBool32 {
