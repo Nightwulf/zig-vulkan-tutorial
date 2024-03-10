@@ -11,16 +11,29 @@ const InitError = error{
     SDLError,
 };
 
+const QueueType = enum {
+    Graphics,
+    Presentation,
+};
+
+const QueueIndices = struct {
+    type: QueueType,
+    idx: u32,
+};
+
 const Globals = struct {
     window: *gfx.SDL_Window,
     instance: gfx.VkInstance,
     physical_device: gfx.VkPhysicalDevice,
-    graphics_family_idx: u32,
+    queue_indices: []QueueIndices,
     device: gfx.VkDevice,
     graphics_queue: gfx.VkQueue,
     surface: gfx.VkSurfaceKHR,
     present_family_index: u32,
+    debugMessenger: gfx.VkDebugUtilsMessengerEXT,
 };
+
+const enableDebugCallback: bool = true;
 
 var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
 var allocator = arena.allocator();
@@ -58,54 +71,108 @@ fn init() !Globals {
     };
 
     var sdl_extension_count: u32 = 0;
-    var sdl_extensions: [*c]const u8 = null;
 
-    _ = gfx.SDL_Vulkan_GetInstanceExtensions(window, &sdl_extension_count, &sdl_extensions);
+    _ = gfx.SDL_Vulkan_GetInstanceExtensions(window, &sdl_extension_count, null);
 
-    const create_info = gfx.VkInstanceCreateInfo{
+    const extension_names = try allocator.alloc([*c]const u8, sdl_extension_count);
+    _ = gfx.SDL_Vulkan_GetInstanceExtensions(window, &sdl_extension_count, extension_names.ptr);
+
+    var final_extension_names = std.ArrayList([*c]const u8).init(allocator);
+    try final_extension_names.appendSlice(extension_names);
+
+    if (enableDebugCallback) {
+        try final_extension_names.append(gfx.VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
+    }
+
+    std.debug.print("Final Vulkan-Extensions: {d}\n", .{final_extension_names.items.len});
+    for (final_extension_names.items) |extension| {
+        std.debug.print("{s}\n", .{extension});
+    }
+
+    const validationLayers = [_][*:0]const u8{"VK_LAYER_KHRONOS_validation"};
+
+    var create_info = gfx.VkInstanceCreateInfo{
         .sType = gfx.VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO,
         .pApplicationInfo = &app_info,
-        .enabledExtensionCount = sdl_extension_count,
-        .ppEnabledExtensionNames = &sdl_extensions,
+        .enabledLayerCount = 0,
+        .ppEnabledLayerNames = null,
+        .enabledExtensionCount = @intCast(final_extension_names.items.len),
+        .ppEnabledExtensionNames = final_extension_names.items.ptr,
     };
 
+    if (enableDebugCallback) {
+        create_info.enabledLayerCount = 1;
+        create_info.ppEnabledLayerNames = &validationLayers;
+        const debug_messenger_create_info = populateDebugCreateInfo();
+        create_info.pNext = &debug_messenger_create_info;
+    }
+
+    _ = gfx.SDL_Vulkan_GetInstanceExtensions(window, &sdl_extension_count, null);
     var instance: gfx.VkInstance = undefined;
     const result = gfx.vkCreateInstance(&create_info, null, &instance);
     if (result != gfx.VK_SUCCESS) {
         return InitError.VulkanError;
     }
 
-    const physical_device = try selectPhysicalDevice(instance);
-
-    const graphical_index = try findQueueFamilies(physical_device);
-
-    const device = try createLogicalDevice(physical_device, graphical_index);
-
-    var queue: gfx.VkQueue = undefined;
-    gfx.vkGetDeviceQueue(device, graphical_index, 0, &queue);
+    var debugMessenger: gfx.VkDebugUtilsMessengerEXT = undefined;
+    if (enableDebugCallback) {
+        const debug_messenger_create_info = populateDebugCreateInfo();
+        if (createDebugUtilsMessengerExt(instance, &debug_messenger_create_info, &debugMessenger) != gfx.VK_SUCCESS) {
+            return InitError.VulkanError;
+        }
+    }
 
     var surface: gfx.VkSurfaceKHR = undefined;
-    if (gfx.SDL_Vulkan_CreateSurface(window, instance, &surface) != gfx.VK_SUCCESS) {
+    if (gfx.SDL_Vulkan_CreateSurface(window, instance, &surface) != gfx.SDL_TRUE) {
+        const sdl_err = gfx.SDL_GetError();
+        std.debug.print("Error: {s}\n", .{sdl_err});
         return InitError.VulkanError;
     }
 
-    const present_idx = try getPresentFamilyIndex(physical_device, surface, graphical_index);
+    const physical_device = try selectPhysicalDevice(instance);
 
-    return Globals{ .window = window, .instance = instance, .physical_device = physical_device, .graphics_family_idx = graphical_index, .device = device, .graphics_queue = queue, .surface = surface, .present_family_index = present_idx };
+    const queue_indices = try findQueueFamilies(physical_device, surface);
+
+    const device = try createLogicalDevice(physical_device, queue_indices);
+
+    var queue: gfx.VkQueue = undefined;
+    gfx.vkGetDeviceQueue(device, getIndexForFamily(queue_indices, QueueType.Graphics), 0, &queue);
+
+    const present_idx = try getPresentFamilyIndex(physical_device, surface, getIndexForFamily(queue_indices, QueueType.Graphics));
+
+    return Globals{ .window = window, .instance = instance, .physical_device = physical_device, .queue_indices = queue_indices, .device = device, .graphics_queue = queue, .surface = surface, .present_family_index = present_idx, .debugMessenger = debugMessenger };
 }
 
-fn createLogicalDevice(physical_device: gfx.VkPhysicalDevice, graphical_index: u32) !gfx.VkDevice {
-    var queue_priority: f32 = 1.0;
-    var queue_create_info = gfx.VkDeviceQueueCreateInfo{
-        .sType = gfx.VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
-        .queueFamilyIndex = graphical_index,
-        .queueCount = 1,
-        .pQueuePriorities = &queue_priority,
+fn populateDebugCreateInfo() gfx.VkDebugUtilsMessengerCreateInfoEXT {
+    return gfx.VkDebugUtilsMessengerCreateInfoEXT{
+        .sType = gfx.VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT,
+        .messageSeverity = gfx.VK_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT | gfx.VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT | gfx.VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT,
+        .messageType = gfx.VK_DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT | gfx.VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT | gfx.VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT,
+        .pfnUserCallback = debugCallback,
+        .pUserData = null,
     };
+}
+
+fn createLogicalDevice(physical_device: gfx.VkPhysicalDevice, queue_indices: []QueueIndices) !gfx.VkDevice {
+    const unique_queue_families: []u32 = try allocator.alloc(u32, queue_indices.len);
+    for (queue_indices, 0..) |idx, i| {
+        unique_queue_families[i] = idx.idx;
+    }
+    var queue_create_infos = std.ArrayList(gfx.VkDeviceQueueCreateInfo).init(allocator);
+    var queue_priority: f32 = 1.0;
+    for (unique_queue_families) |idx| {
+        const queue_create_info = gfx.VkDeviceQueueCreateInfo{
+            .sType = gfx.VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
+            .queueFamilyIndex = idx,
+            .queueCount = 1,
+            .pQueuePriorities = &queue_priority,
+        };
+        try queue_create_infos.append(queue_create_info);
+    }
     var createInfo = gfx.VkDeviceCreateInfo{
         .sType = gfx.VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
-        .pQueueCreateInfos = &queue_create_info,
-        .queueCreateInfoCount = 1,
+        .pQueueCreateInfos = queue_create_infos.items.ptr,
+        .queueCreateInfoCount = @intCast(queue_create_infos.items.len),
         .pEnabledFeatures = &gfx.VkPhysicalDeviceFeatures{},
         .enabledLayerCount = 0,
     };
@@ -116,22 +183,39 @@ fn createLogicalDevice(physical_device: gfx.VkPhysicalDevice, graphical_index: u
     return device;
 }
 
-fn findQueueFamilies(physical_device: gfx.VkPhysicalDevice) !u32 {
+fn findQueueFamilies(physical_device: gfx.VkPhysicalDevice, surface: gfx.VkSurfaceKHR) ![]QueueIndices {
+    var queue_indices = [_]QueueIndices{
+        QueueIndices{ .idx = 0, .type = QueueType.Graphics },
+        QueueIndices{ .idx = 0, .type = QueueType.Presentation },
+    };
     var queue_family_count: u32 = 0;
     gfx.vkGetPhysicalDeviceQueueFamilyProperties(physical_device, &queue_family_count, null);
     const queue_families: []gfx.VkQueueFamilyProperties = try allocator.alloc(gfx.VkQueueFamilyProperties, queue_family_count);
     gfx.vkGetPhysicalDeviceQueueFamilyProperties(physical_device, &queue_family_count, queue_families.ptr);
 
-    // continue here with queue families!
-
-    var family_idx: u32 = 0;
+    var found_gfx = false;
+    var found_present = false;
+    var idx: u32 = 0;
     for (queue_families) |family| {
         if (family.queueFlags & gfx.VK_QUEUE_GRAPHICS_BIT != 0) {
-            return family_idx;
+            found_gfx = true;
+            queue_indices[0].idx = idx;
         }
-        family_idx += 1;
+        var present_support: gfx.VkBool32 = gfx.VK_FALSE;
+        const rs = gfx.vkGetPhysicalDeviceSurfaceSupportKHR(physical_device, idx, surface, &present_support);
+        if (present_support == gfx.VK_TRUE) {
+            found_present = true;
+            queue_indices[1].idx = idx;
+        }
+        if (rs != gfx.VK_SUCCESS) {
+            std.debug.print("rs: {d}\n", .{rs});
+        }
+        idx += 1;
     }
-    return InitError.VulkanError;
+    if (!found_gfx or !found_present) {
+        return InitError.VulkanError;
+    }
+    return &queue_indices;
 }
 
 fn getPresentFamilyIndex(device: gfx.VkPhysicalDevice, surface: gfx.VkSurfaceKHR, graphical_idx: u32) !u32 {
@@ -171,13 +255,52 @@ fn selectPhysicalDevice(instance: gfx.VkInstance) !gfx.VkPhysicalDevice {
     return physical_device;
 }
 
+fn debugCallback(messageSeverity: gfx.VkDebugUtilsMessageSeverityFlagBitsEXT, messageType: gfx.VkDebugUtilsMessageTypeFlagsEXT, pCallbackData: [*c]const gfx.VkDebugUtilsMessengerCallbackDataEXT, pUserData: ?*anyopaque) callconv(.C) gfx.VkBool32 {
+    std.debug.print("validation layer: {s}\n", .{pCallbackData.*.pMessage});
+    _ = messageSeverity;
+    _ = messageType;
+    _ = pUserData;
+    return gfx.VK_FALSE;
+}
+
+fn createDebugUtilsMessengerExt(instance: gfx.VkInstance, pCreateInfo: *const gfx.VkDebugUtilsMessengerCreateInfoEXT, pDebugMessenger: *gfx.VkDebugUtilsMessengerEXT) gfx.VkResult {
+    const f = gfx.vkGetInstanceProcAddr(instance, "vkCreateDebugUtilsMessengerEXT");
+    const cDbgFn: gfx.PFN_vkCreateDebugUtilsMessengerEXT = @ptrCast(f);
+    if (cDbgFn) |dbgFn| {
+        return dbgFn(instance, pCreateInfo, null, pDebugMessenger);
+    }
+    return gfx.VK_ERROR_EXTENSION_NOT_PRESENT;
+}
+
+fn DestroyDebugUtilMessengerExt(instance: gfx.VkInstance, callback: gfx.VkDebugUtilsMessengerEXT) void {
+    const destroy_func = gfx.vkGetInstanceProcAddr(instance, "vkDestroyDebugUtilsMessengerEXT");
+    const func: gfx.PFN_vkDestroyDebugUtilsMessengerEXT = @ptrCast(destroy_func);
+    if (func) |d_func| {
+        d_func(instance, callback, null);
+    }
+}
+
 fn cleanup(globals: Globals) void {
     // cleanup vulkan
+    gfx.vkDestroyDevice(globals.device, null);
+    if (enableDebugCallback) {
+        DestroyDebugUtilMessengerExt(globals.instance, globals.debugMessenger);
+    }
     gfx.vkDestroySurfaceKHR(globals.instance, globals.surface, null);
     gfx.vkDestroyInstance(globals.instance, null);
-    gfx.vkDestroyDevice(globals.device, null);
 
     // cleanup SDL
     gfx.SDL_DestroyWindow(globals.window);
     gfx.SDL_Quit();
+}
+
+// helpers
+
+fn getIndexForFamily(q: []QueueIndices, f: QueueType) u32 {
+    for (q) |qi| {
+        if (qi.type == f) {
+            return qi.idx;
+        }
+    }
+    return 0;
 }
