@@ -33,7 +33,7 @@ const Globals = struct {
     debugMessenger: gfx.VkDebugUtilsMessengerEXT,
 };
 
-const enableDebugCallback: bool = false;
+const enableDebugCallback: bool = true;
 
 var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
 var allocator = arena.allocator();
@@ -77,25 +77,34 @@ fn init() !Globals {
     const extension_names = try allocator.alloc([*c]const u8, sdl_extension_count);
     _ = gfx.SDL_Vulkan_GetInstanceExtensions(window, &sdl_extension_count, extension_names.ptr);
 
-    std.debug.print("SDL-Vulkan-Extensions:\n", .{});
-    for (extension_names) |extension| {
+    var final_extension_names = std.ArrayList([*c]const u8).init(allocator);
+    try final_extension_names.appendSlice(extension_names);
+
+    if (enableDebugCallback) {
+        try final_extension_names.append(gfx.VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
+    }
+
+    std.debug.print("Final Vulkan-Extensions: {d}\n", .{final_extension_names.items.len});
+    for (final_extension_names.items) |extension| {
         std.debug.print("{s}\n", .{extension});
     }
 
-    const validationLayers = [_][*:0]const u8{"VK_LAYER_LUNARG_standard_validation"};
+    const validationLayers = [_][*:0]const u8{"VK_LAYER_KHRONOS_validation"};
 
     var create_info = gfx.VkInstanceCreateInfo{
         .sType = gfx.VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO,
         .pApplicationInfo = &app_info,
         .enabledLayerCount = 0,
         .ppEnabledLayerNames = null,
-        .enabledExtensionCount = sdl_extension_count,
-        .ppEnabledExtensionNames = extension_names.ptr,
+        .enabledExtensionCount = @intCast(final_extension_names.items.len),
+        .ppEnabledExtensionNames = final_extension_names.items.ptr,
     };
 
     if (enableDebugCallback) {
         create_info.enabledLayerCount = 1;
         create_info.ppEnabledLayerNames = &validationLayers;
+        const debug_messenger_create_info = populateDebugCreateInfo();
+        create_info.pNext = &debug_messenger_create_info;
     }
 
     _ = gfx.SDL_Vulkan_GetInstanceExtensions(window, &sdl_extension_count, null);
@@ -105,15 +114,9 @@ fn init() !Globals {
         return InitError.VulkanError;
     }
 
+    var debugMessenger: gfx.VkDebugUtilsMessengerEXT = undefined;
     if (enableDebugCallback) {
-        const debug_messenger_create_info = gfx.VkDebugUtilsMessengerCreateInfoEXT{
-            .sType = gfx.VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT,
-            .messageSeverity = gfx.VK_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT | gfx.VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT | gfx.VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT,
-            .messageType = gfx.VK_DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT | gfx.VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT | gfx.VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT,
-            .pfnUserCallback = debugCallback,
-            .pUserData = null,
-        };
-        var debugMessenger: gfx.VkDebugUtilsMessengerEXT = undefined;
+        const debug_messenger_create_info = populateDebugCreateInfo();
         if (createDebugUtilsMessengerExt(instance, &debug_messenger_create_info, &debugMessenger) != gfx.VK_SUCCESS) {
             return InitError.VulkanError;
         }
@@ -137,7 +140,17 @@ fn init() !Globals {
 
     const present_idx = try getPresentFamilyIndex(physical_device, surface, getIndexForFamily(queue_indices, QueueType.Graphics));
 
-    return Globals{ .window = window, .instance = instance, .physical_device = physical_device, .queue_indices = queue_indices, .device = device, .graphics_queue = queue, .surface = surface, .present_family_index = present_idx, .debugMessenger = undefined };
+    return Globals{ .window = window, .instance = instance, .physical_device = physical_device, .queue_indices = queue_indices, .device = device, .graphics_queue = queue, .surface = surface, .present_family_index = present_idx, .debugMessenger = debugMessenger };
+}
+
+fn populateDebugCreateInfo() gfx.VkDebugUtilsMessengerCreateInfoEXT {
+    return gfx.VkDebugUtilsMessengerCreateInfoEXT{
+        .sType = gfx.VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT,
+        .messageSeverity = gfx.VK_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT | gfx.VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT | gfx.VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT,
+        .messageType = gfx.VK_DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT | gfx.VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT | gfx.VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT,
+        .pfnUserCallback = debugCallback,
+        .pUserData = null,
+    };
 }
 
 fn createLogicalDevice(physical_device: gfx.VkPhysicalDevice, queue_indices: []QueueIndices) !gfx.VkDevice {
@@ -260,9 +273,11 @@ fn createDebugUtilsMessengerExt(instance: gfx.VkInstance, pCreateInfo: *const gf
 }
 
 fn DestroyDebugUtilMessengerExt(instance: gfx.VkInstance, callback: gfx.VkDebugUtilsMessengerEXT) void {
-    const destroy_func = gfx.vkGetInstanceProcAddr(instance, "vkDestroyDebugReportCallbackEXT");
-    const func: gfx.PFN_vkDestroyDebugReportCallbackEXT = @ptrCast(destroy_func);
-    func(instance, callback, null);
+    const destroy_func = gfx.vkGetInstanceProcAddr(instance, "vkDestroyDebugUtilsMessengerEXT");
+    const func: gfx.PFN_vkDestroyDebugUtilsMessengerEXT = @ptrCast(destroy_func);
+    if (func) |d_func| {
+        d_func(instance, callback, null);
+    }
 }
 
 fn cleanup(globals: Globals) void {
