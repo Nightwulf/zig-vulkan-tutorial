@@ -169,12 +169,15 @@ fn createLogicalDevice(physical_device: gfx.VkPhysicalDevice, queue_indices: []Q
         };
         try queue_create_infos.append(queue_create_info);
     }
+    const wanted_extensions = [_][*:0]const u8{gfx.VK_KHR_SWAPCHAIN_EXTENSION_NAME};
     var createInfo = gfx.VkDeviceCreateInfo{
         .sType = gfx.VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
         .pQueueCreateInfos = queue_create_infos.items.ptr,
         .queueCreateInfoCount = @intCast(queue_create_infos.items.len),
         .pEnabledFeatures = &gfx.VkPhysicalDeviceFeatures{},
         .enabledLayerCount = 0,
+        .enabledExtensionCount = 1,
+        .ppEnabledExtensionNames = &wanted_extensions,
     };
     var device: gfx.VkDevice = undefined;
     if (gfx.vkCreateDevice(physical_device, &createInfo, null, &device) != gfx.VK_SUCCESS) {
@@ -237,14 +240,15 @@ fn selectPhysicalDevice(instance: gfx.VkInstance) !gfx.VkPhysicalDevice {
 
     const device_list: []gfx.VkPhysicalDevice = try allocator.alloc(gfx.VkPhysicalDevice, device_count);
     _ = gfx.vkEnumeratePhysicalDevices(instance, &device_count, device_list.ptr);
-
+    var found_device = false;
     for (device_list) |device| {
         if (isDeviceSuitable(device)) {
             physical_device = device;
+            found_device = true;
         }
     }
 
-    if (physical_device == undefined) {
+    if (!found_device) {
         return InitError.VulkanError;
     }
     return physical_device;
@@ -256,10 +260,29 @@ fn isDeviceSuitable(device: gfx.VkPhysicalDevice) bool {
 
     gfx.vkGetPhysicalDeviceProperties(device, &deviceProperties);
     gfx.vkGetPhysicalDeviceFeatures(device, &deviceFeatures);
-    if (deviceProperties.deviceType == gfx.VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU and deviceFeatures.geometryShader != 0) {
+    if (deviceProperties.deviceType == gfx.VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU and deviceFeatures.geometryShader != 0 and checkDeviceExtensionSupport(device) catch false) {
         return true;
     }
     return false;
+}
+
+fn checkDeviceExtensionSupport(device: gfx.VkPhysicalDevice) !bool {
+    const needed_extensions: [1][]const u8 = .{gfx.VK_KHR_SWAPCHAIN_EXTENSION_NAME};
+    var extension_count: u32 = undefined;
+    _ = gfx.vkEnumerateDeviceExtensionProperties(device, null, &extension_count, null);
+    const available_extensions: []gfx.VkExtensionProperties = try allocator.alloc(gfx.VkExtensionProperties, extension_count);
+    _ = gfx.vkEnumerateDeviceExtensionProperties(device, null, &extension_count, available_extensions.ptr);
+    var found_extensions: usize = 0;
+    outer: for (needed_extensions) |extension| {
+        for (available_extensions) |avail_extension| {
+            const avail = std.mem.sliceTo(&avail_extension.extensionName, 0);
+            if (std.ascii.eqlIgnoreCase(avail, extension)) {
+                found_extensions += 1;
+                continue :outer;
+            }
+        }
+    }
+    return found_extensions == needed_extensions.len;
 }
 
 fn debugCallback(messageSeverity: gfx.VkDebugUtilsMessageSeverityFlagBitsEXT, messageType: gfx.VkDebugUtilsMessageTypeFlagsEXT, pCallbackData: [*c]const gfx.VkDebugUtilsMessengerCallbackDataEXT, pUserData: ?*anyopaque) callconv(.C) gfx.VkBool32 {
