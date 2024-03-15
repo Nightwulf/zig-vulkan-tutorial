@@ -21,6 +21,12 @@ const QueueIndices = struct {
     idx: u32,
 };
 
+const SwapChainSupportDetails = struct {
+    capabilities: gfx.VkSurfaceCapabilitiesKHR,
+    formats: []gfx.VkSurfaceFormatKHR,
+    presentModes: []gfx.VkPresentModeKHR,
+};
+
 const Globals = struct {
     window: *gfx.SDL_Window,
     instance: gfx.VkInstance,
@@ -31,6 +37,7 @@ const Globals = struct {
     surface: gfx.VkSurfaceKHR,
     present_family_index: u32,
     debugMessenger: gfx.VkDebugUtilsMessengerEXT,
+    swapChain: gfx.VkSwapchainKHR,
 };
 
 const enableDebugCallback: bool = true;
@@ -84,11 +91,6 @@ fn init() !Globals {
         try final_extension_names.append(gfx.VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
     }
 
-    std.debug.print("Final Vulkan-Extensions: {d}\n", .{final_extension_names.items.len});
-    for (final_extension_names.items) |extension| {
-        std.debug.print("{s}\n", .{extension});
-    }
-
     const validationLayers = [_][*:0]const u8{"VK_LAYER_KHRONOS_validation"};
 
     var create_info = gfx.VkInstanceCreateInfo{
@@ -140,7 +142,107 @@ fn init() !Globals {
 
     const present_idx = try getPresentFamilyIndex(physical_device, surface, getIndexForFamily(queue_indices, QueueType.Graphics));
 
-    return Globals{ .window = window, .instance = instance, .physical_device = physical_device, .queue_indices = queue_indices, .device = device, .graphics_queue = queue, .surface = surface, .present_family_index = present_idx, .debugMessenger = debugMessenger };
+    const swapChainDetails = try querySwapChainSupport(physical_device, surface);
+
+    if (swapChainDetails.formats.len == 0 or swapChainDetails.presentModes.len == 0) {
+        return InitError.VulkanError;
+    }
+
+    const swap_chain = try createSwapChain(window, device, physical_device, surface);
+
+    return Globals{ .window = window, .instance = instance, .physical_device = physical_device, .queue_indices = queue_indices, .device = device, .graphics_queue = queue, .surface = surface, .present_family_index = present_idx, .debugMessenger = debugMessenger, .swapChain = swap_chain };
+}
+
+fn createSwapChain(window: *gfx.SDL_Window, device: gfx.VkDevice, physical_device: gfx.VkPhysicalDevice, surface: gfx.VkSurfaceKHR) !gfx.VkSwapchainKHR {
+    const swap_chain_support_details = try querySwapChainSupport(physical_device, surface);
+    const surface_format = chooseSwapSurfaceFormat(swap_chain_support_details.formats);
+    const present_mode = chooseSwapPresentMode(swap_chain_support_details.presentModes);
+    const extent = chooseSwapExtent(window, swap_chain_support_details.capabilities);
+    var image_count = swap_chain_support_details.capabilities.minImageCount + 1;
+    if (swap_chain_support_details.capabilities.maxImageCount > 0 and image_count > swap_chain_support_details.capabilities.maxImageCount) {
+        image_count = swap_chain_support_details.capabilities.maxImageCount;
+    }
+    var create_info = gfx.VkSwapchainCreateInfoKHR{
+        .sType = gfx.VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR,
+        .surface = surface,
+        .minImageCount = image_count,
+        .imageFormat = surface_format.format,
+        .imageColorSpace = surface_format.colorSpace,
+        .imageExtent = extent,
+        .imageArrayLayers = 1,
+        .imageUsage = gfx.VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
+        .preTransform = swap_chain_support_details.capabilities.currentTransform,
+        .compositeAlpha = gfx.VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR,
+        .presentMode = present_mode,
+        .clipped = gfx.VK_TRUE,
+        .oldSwapchain = null,
+    };
+
+    const indices = try findQueueFamilies(physical_device, surface);
+    if (indices[0].idx != indices[1].idx) {
+        const family_indices: [2]u32 = .{ indices[0].idx, indices[1].idx };
+        create_info.imageSharingMode = gfx.VK_SHARING_MODE_CONCURRENT;
+        create_info.queueFamilyIndexCount = 2;
+        create_info.pQueueFamilyIndices = &family_indices;
+    } else {
+        create_info.imageSharingMode = gfx.VK_SHARING_MODE_EXCLUSIVE;
+        create_info.queueFamilyIndexCount = 0;
+        create_info.pQueueFamilyIndices = null;
+    }
+    var swap_chain: gfx.VkSwapchainKHR = undefined;
+    if (gfx.vkCreateSwapchainKHR(device, &create_info, null, &swap_chain) != gfx.VK_SUCCESS) {
+        return InitError.VulkanError;
+    }
+    return swap_chain;
+}
+
+fn querySwapChainSupport(device: gfx.VkPhysicalDevice, surface: gfx.VkSurfaceKHR) !SwapChainSupportDetails {
+    var details: SwapChainSupportDetails = SwapChainSupportDetails{ .capabilities = undefined, .formats = undefined, .presentModes = undefined };
+    _ = gfx.vkGetPhysicalDeviceSurfaceCapabilitiesKHR(device, surface, &details.capabilities);
+
+    var format_count: u32 = undefined;
+    _ = gfx.vkGetPhysicalDeviceSurfaceFormatsKHR(device, surface, &format_count, null);
+    if (format_count != 0) {
+        details.formats = try allocator.alloc(gfx.VkSurfaceFormatKHR, format_count);
+        _ = gfx.vkGetPhysicalDeviceSurfaceFormatsKHR(device, surface, &format_count, details.formats.ptr);
+    }
+
+    var present_mode_count: u32 = undefined;
+    _ = gfx.vkGetPhysicalDeviceSurfacePresentModesKHR(device, surface, &present_mode_count, null);
+    if (present_mode_count != 0) {
+        details.presentModes = try allocator.alloc(gfx.VkPresentModeKHR, present_mode_count);
+        _ = gfx.vkGetPhysicalDeviceSurfacePresentModesKHR(device, surface, &present_mode_count, details.presentModes.ptr);
+    }
+
+    return details;
+}
+
+fn chooseSwapSurfaceFormat(availableFormats: []gfx.VkSurfaceFormatKHR) gfx.VkSurfaceFormatKHR {
+    for (availableFormats) |format| {
+        if (format.format == gfx.VK_FORMAT_B8G8R8A8_SRGB and format.colorSpace == gfx.VK_COLOR_SPACE_SRGB_NONLINEAR_KHR) {
+            return format;
+        }
+    }
+    return availableFormats[0];
+}
+
+fn chooseSwapPresentMode(availablePresentModes: []gfx.VkPresentModeKHR) gfx.VkPresentModeKHR {
+    for (availablePresentModes) |mode| {
+        if (mode == gfx.VK_PRESENT_MODE_MAILBOX_KHR) {
+            return mode;
+        }
+    }
+    return gfx.VK_PRESENT_MODE_FIFO_KHR;
+}
+
+fn chooseSwapExtent(window: *gfx.SDL_Window, capabilities: gfx.VkSurfaceCapabilitiesKHR) gfx.VkExtent2D {
+    if (capabilities.currentExtent.width != std.math.maxInt(u32)) {
+        return capabilities.currentExtent;
+    }
+    var width: c_int = undefined;
+    var height: c_int = undefined;
+    gfx.SDL_GetWindowSize(window, &width, &height);
+    return gfx.VkExtent2D{ .width = @intCast(width), .height = @intCast(height) };
 }
 
 fn populateDebugCreateInfo() gfx.VkDebugUtilsMessengerCreateInfoEXT {
@@ -312,6 +414,7 @@ fn DestroyDebugUtilMessengerExt(instance: gfx.VkInstance, callback: gfx.VkDebugU
 
 fn cleanup(globals: Globals) void {
     // cleanup vulkan
+    gfx.vkDestroySwapchainKHR(globals.device, globals.swapChain, null);
     gfx.vkDestroyDevice(globals.device, null);
     if (enableDebugCallback) {
         DestroyDebugUtilMessengerExt(globals.instance, globals.debugMessenger);
