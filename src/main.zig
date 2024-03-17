@@ -3,8 +3,12 @@ const gfx = @cImport({
     @cInclude("vulkan/vulkan.h");
     @cInclude("SDL2/SDL.h");
     @cInclude("SDL2/SDL_vulkan.h");
-    //   @cInclude("glm/glm.h");
 });
+
+// const m = @cImport({
+//     @cInclude("glm/vec4.hpp");
+//     @cInclude("glm/mat4x4.hpp");
+// });
 
 const InitError = error{
     VulkanError,
@@ -164,6 +168,8 @@ fn init() !Globals {
 
     const swap_chain_image_views = try createImageViews(device, swap_chain, swap_chain_images);
 
+    // try createGraphicsPipeline();
+
     return Globals{
         .window = window,
         .instance = instance,
@@ -181,6 +187,14 @@ fn init() !Globals {
         .swapChainImageViews = swap_chain_image_views,
     };
 }
+
+// fn createGraphicsPipeline() !void {
+//     const vert_shader_code = try readFile("vert.spv");
+//     const frag_shader_code = try readFile("frag.spv");
+
+//     _ = vert_shader_code;
+//     _ = frag_shader_code;
+// }
 
 fn createImageViews(device: gfx.VkDevice, swap_chain_details: SwapChainDetails, swap_chain_images: []gfx.VkImage) ![]gfx.VkImageView {
     var swap_chain_image_views: []gfx.VkImageView = try allocator.alloc(gfx.VkImageView, swap_chain_images.len);
@@ -509,3 +523,12 @@ fn getIndexForFamily(q: []QueueIndices, f: QueueType) u32 {
     }
     return 0;
 }
+
+// fn readFile(filename: []const u8) ![]u8 {
+//     const file = try std.fs.openFileAbsolute(filename, std.fs.File.OpenFlags{ .mode = .read_only });
+//     const stat = try file.stat();
+//     const outbuf: []u8 = try allocator.alloc(u8, stat.size);
+//     _ = try file.readAll(outbuf);
+//     file.close();
+//     return outbuf;
+// }
