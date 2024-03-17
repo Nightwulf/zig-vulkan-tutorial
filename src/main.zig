@@ -27,6 +27,12 @@ const SwapChainSupportDetails = struct {
     presentModes: []gfx.VkPresentModeKHR,
 };
 
+const SwapChainDetails = struct {
+    swapChain: gfx.VkSwapchainKHR,
+    swapChainImageFormat: gfx.VkFormat,
+    swapChainExtent: gfx.VkExtent2D,
+};
+
 const Globals = struct {
     window: *gfx.SDL_Window,
     instance: gfx.VkInstance,
@@ -38,6 +44,10 @@ const Globals = struct {
     present_family_index: u32,
     debugMessenger: gfx.VkDebugUtilsMessengerEXT,
     swapChain: gfx.VkSwapchainKHR,
+    swapChainImages: []gfx.VkImage,
+    swapChainImageFormat: gfx.VkFormat,
+    swapChainExtent: gfx.VkExtent2D,
+    swapChainImageViews: []gfx.VkImageView,
 };
 
 const enableDebugCallback: bool = true;
@@ -150,10 +160,69 @@ fn init() !Globals {
 
     const swap_chain = try createSwapChain(window, device, physical_device, surface);
 
-    return Globals{ .window = window, .instance = instance, .physical_device = physical_device, .queue_indices = queue_indices, .device = device, .graphics_queue = queue, .surface = surface, .present_family_index = present_idx, .debugMessenger = debugMessenger, .swapChain = swap_chain };
+    const swap_chain_images = try getSwapChainImages(device, swap_chain.swapChain);
+
+    const swap_chain_image_views = try createImageViews(device, swap_chain, swap_chain_images);
+
+    return Globals{
+        .window = window,
+        .instance = instance,
+        .physical_device = physical_device,
+        .queue_indices = queue_indices,
+        .device = device,
+        .graphics_queue = queue,
+        .surface = surface,
+        .present_family_index = present_idx,
+        .debugMessenger = debugMessenger,
+        .swapChain = swap_chain.swapChain,
+        .swapChainExtent = swap_chain.swapChainExtent,
+        .swapChainImageFormat = swap_chain.swapChainImageFormat,
+        .swapChainImages = swap_chain_images,
+        .swapChainImageViews = swap_chain_image_views,
+    };
 }
 
-fn createSwapChain(window: *gfx.SDL_Window, device: gfx.VkDevice, physical_device: gfx.VkPhysicalDevice, surface: gfx.VkSurfaceKHR) !gfx.VkSwapchainKHR {
+fn createImageViews(device: gfx.VkDevice, swap_chain_details: SwapChainDetails, swap_chain_images: []gfx.VkImage) ![]gfx.VkImageView {
+    var swap_chain_image_views: []gfx.VkImageView = try allocator.alloc(gfx.VkImageView, swap_chain_images.len);
+
+    for (swap_chain_images, 0..) |image, i| {
+        const create_info = gfx.VkImageViewCreateInfo{
+            .sType = gfx.VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+            .image = image,
+            .viewType = gfx.VK_IMAGE_VIEW_TYPE_2D,
+            .format = swap_chain_details.swapChainImageFormat,
+            .components = gfx.VkComponentMapping{
+                .r = gfx.VK_COMPONENT_SWIZZLE_IDENTITY,
+                .g = gfx.VK_COMPONENT_SWIZZLE_IDENTITY,
+                .b = gfx.VK_COMPONENT_SWIZZLE_IDENTITY,
+                .a = gfx.VK_COMPONENT_SWIZZLE_IDENTITY,
+            },
+            .subresourceRange = gfx.VkImageSubresourceRange{
+                .aspectMask = gfx.VK_IMAGE_ASPECT_COLOR_BIT,
+                .baseMipLevel = 0,
+                .levelCount = 1,
+                .baseArrayLayer = 0,
+                .layerCount = 1,
+            },
+        };
+        if (gfx.vkCreateImageView(device, &create_info, null, &swap_chain_image_views[i]) != gfx.VK_SUCCESS) {
+            return InitError.VulkanError;
+        }
+    }
+
+    return swap_chain_image_views;
+}
+
+fn getSwapChainImages(device: gfx.VkDevice, swap_chain: gfx.VkSwapchainKHR) ![]gfx.VkImage {
+    var image_count: u32 = undefined;
+
+    _ = gfx.vkGetSwapchainImagesKHR(device, swap_chain, &image_count, null);
+    const images: []gfx.VkImage = try allocator.alloc(gfx.VkImage, image_count);
+    _ = gfx.vkGetSwapchainImagesKHR(device, swap_chain, &image_count, images.ptr);
+    return images;
+}
+
+fn createSwapChain(window: *gfx.SDL_Window, device: gfx.VkDevice, physical_device: gfx.VkPhysicalDevice, surface: gfx.VkSurfaceKHR) !SwapChainDetails {
     const swap_chain_support_details = try querySwapChainSupport(physical_device, surface);
     const surface_format = chooseSwapSurfaceFormat(swap_chain_support_details.formats);
     const present_mode = chooseSwapPresentMode(swap_chain_support_details.presentModes);
@@ -193,7 +262,7 @@ fn createSwapChain(window: *gfx.SDL_Window, device: gfx.VkDevice, physical_devic
     if (gfx.vkCreateSwapchainKHR(device, &create_info, null, &swap_chain) != gfx.VK_SUCCESS) {
         return InitError.VulkanError;
     }
-    return swap_chain;
+    return SwapChainDetails{ .swapChain = swap_chain, .swapChainExtent = extent, .swapChainImageFormat = surface_format.format };
 }
 
 fn querySwapChainSupport(device: gfx.VkPhysicalDevice, surface: gfx.VkSurfaceKHR) !SwapChainSupportDetails {
@@ -414,6 +483,9 @@ fn DestroyDebugUtilMessengerExt(instance: gfx.VkInstance, callback: gfx.VkDebugU
 
 fn cleanup(globals: Globals) void {
     // cleanup vulkan
+    for (globals.swapChainImageViews) |view| {
+        gfx.vkDestroyImageView(globals.device, view, null);
+    }
     gfx.vkDestroySwapchainKHR(globals.device, globals.swapChain, null);
     gfx.vkDestroyDevice(globals.device, null);
     if (enableDebugCallback) {
