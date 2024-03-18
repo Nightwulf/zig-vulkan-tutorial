@@ -168,7 +168,7 @@ fn init() !Globals {
 
     const swap_chain_image_views = try createImageViews(device, swap_chain, swap_chain_images);
 
-    // try createGraphicsPipeline();
+    try createGraphicsPipeline(device);
 
     return Globals{
         .window = window,
@@ -188,13 +188,29 @@ fn init() !Globals {
     };
 }
 
-// fn createGraphicsPipeline() !void {
-//     const vert_shader_code = try readFile("vert.spv");
-//     const frag_shader_code = try readFile("frag.spv");
+fn createGraphicsPipeline(device: gfx.VkDevice) !void {
+    const vert_shader_code = try readFile("vert.spv");
+    const frag_shader_code = try readFile("frag.spv");
 
-//     _ = vert_shader_code;
-//     _ = frag_shader_code;
-// }
+    const vert_shader_module = try createShaderModule(vert_shader_code, device);
+    defer gfx.vkDestroyShaderModule(device, vert_shader_module, null);
+
+    const frag_shader_module = try createShaderModule(frag_shader_code, device);
+    defer gfx.vkDestroyShaderModule(device, frag_shader_module, null);
+}
+
+fn createShaderModule(shader_code: []align(4) u8, device: gfx.VkDevice) !gfx.VkShaderModule {
+    const create_info = gfx.VkShaderModuleCreateInfo{
+        .sType = gfx.VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
+        .codeSize = shader_code.len,
+        .pCode = @ptrCast(shader_code.ptr),
+    };
+    var shader_module: gfx.VkShaderModule = undefined;
+    if (gfx.vkCreateShaderModule(device, &create_info, null, &shader_module) != gfx.VK_SUCCESS) {
+        return InitError.VulkanError;
+    }
+    return shader_module;
+}
 
 fn createImageViews(device: gfx.VkDevice, swap_chain_details: SwapChainDetails, swap_chain_images: []gfx.VkImage) ![]gfx.VkImageView {
     var swap_chain_image_views: []gfx.VkImageView = try allocator.alloc(gfx.VkImageView, swap_chain_images.len);
@@ -524,11 +540,16 @@ fn getIndexForFamily(q: []QueueIndices, f: QueueType) u32 {
     return 0;
 }
 
-// fn readFile(filename: []const u8) ![]u8 {
-//     const file = try std.fs.openFileAbsolute(filename, std.fs.File.OpenFlags{ .mode = .read_only });
-//     const stat = try file.stat();
-//     const outbuf: []u8 = try allocator.alloc(u8, stat.size);
-//     _ = try file.readAll(outbuf);
-//     file.close();
-//     return outbuf;
-// }
+fn readFile(filename: []const u8) ![]align(4) u8 {
+    var path: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+    const current = try std.os.getcwd(&path);
+    const absolute_path: []u8 = try std.mem.join(allocator, "/", &[_][]const u8{ current, filename });
+    std.debug.print("{s}\n", .{absolute_path});
+    const file = try std.fs.openFileAbsolute(absolute_path, std.fs.File.OpenFlags{ .mode = .read_only });
+    const stat = try file.stat();
+    const outbuf: []align(4) u8 = try allocator.allocWithOptions(u8, stat.size, 4, null);
+    _ = try file.readAll(outbuf);
+    file.close();
+    std.debug.print("size: {d}\n", .{outbuf.len});
+    return outbuf;
+}
