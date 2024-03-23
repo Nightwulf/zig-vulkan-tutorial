@@ -4,17 +4,15 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
-    const vertex_shader_compiler = b.addSystemCommand(&.{"glslc"});
-    vertex_shader_compiler.addArgs(&.{ "-o", "-" });
+    const vertex_shader_compiler = b.addSystemCommand(&.{ "glslc", "-o" });
+    const vert_shader_out = vertex_shader_compiler.addOutputFileArg("frag.spv");
     vertex_shader_compiler.addFileArg(.{ .path = "src/shader.vert" });
-    const vertex_out = vertex_shader_compiler.captureStdOut();
-    b.getInstallStep().dependOn(&b.addInstallBinFile(vertex_out, "vert.spv").step);
+    b.getInstallStep().dependOn(&b.addInstallBinFile(vert_shader_out, "vert.spv").step);
 
-    const fragment_shader_compiler = b.addSystemCommand(&.{"glslc"});
-    fragment_shader_compiler.addArgs(&.{ "-o", "-" });
+    const fragment_shader_compiler = b.addSystemCommand(&.{ "glslc", "-o" });
+    const frag_shader_out = fragment_shader_compiler.addOutputFileArg("frag.spv");
     fragment_shader_compiler.addFileArg(.{ .path = "src/shader.frag" });
-    const fragment_out = fragment_shader_compiler.captureStdOut();
-    b.getInstallStep().dependOn(&b.addInstallBinFile(fragment_out, "frag.spv").step);
+    b.getInstallStep().dependOn(&b.addInstallBinFile(frag_shader_out, "frag.spv").step);
 
     const exe = b.addExecutable(.{
         .name = "zigvulkan",
