@@ -550,6 +550,5 @@ fn readFile(filename: []const u8) ![]align(4) u8 {
     const outbuf: []align(4) u8 = try allocator.allocWithOptions(u8, stat.size, 4, null);
     _ = try file.readAll(outbuf);
     file.close();
-    std.debug.print("size: {d}\n", .{outbuf.len});
     return outbuf;
 }
