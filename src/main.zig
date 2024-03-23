@@ -197,6 +197,23 @@ fn createGraphicsPipeline(device: gfx.VkDevice) !void {
 
     const frag_shader_module = try createShaderModule(frag_shader_code, device);
     defer gfx.vkDestroyShaderModule(device, frag_shader_module, null);
+
+    const vert_shader_stage_info = gfx.VkPipelineShaderStageCreateInfo{
+        .sType = gfx.VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+        .stage = gfx.VK_SHADER_STAGE_VERTEX_BIT,
+        .module = vert_shader_module,
+        .pName = "main",
+    };
+
+    const frag_shader_stage_info = gfx.VkPipelineShaderStageCreateInfo{
+        .sType = gfx.VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+        .stage = gfx.VK_SHADER_STAGE_FRAGMENT_BIT,
+        .module = frag_shader_module,
+        .pName = "main",
+    };
+
+    const shader_stages = [_]gfx.VkPipelineShaderStageCreateInfo{ vert_shader_stage_info, frag_shader_stage_info };
+    _ = shader_stages;
 }
 
 fn createShaderModule(shader_code: []align(4) u8, device: gfx.VkDevice) !gfx.VkShaderModule {
