@@ -17,3 +17,7 @@ jobs:
         run: |
           ls ${{ gitea.workspace }}
       - run: echo "🍏 This job's status is ${{ job.status }}."
+      - run: echo "Go version:"
+      - run: go version
+      - run: echo "Zig version:"
+      - run: zig version
