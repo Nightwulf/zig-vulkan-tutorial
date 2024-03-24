@@ -3,7 +3,7 @@ run-name: ${{ gitea.actor }} is building zig vulkan 🚀
 on: [push]
 
 jobs:
-  Explore-Gitea-Actions:
+  Build-Zigvulkan:
     runs-on: riscv-ubuntu
     steps:
       - name: Check out repository code
