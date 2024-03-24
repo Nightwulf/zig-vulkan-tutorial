@@ -1,0 +1,10 @@
+name: Build zigvulkan
+run-name: ${{ gitea.actor }} is building zig vulkan 🚀
+on: [push]
+
+jobs:
+  Explore-Gitea-Actions:
+    runs-on: riscv-ubuntu
+    steps:
+      -run: zig build --summary=all
+      -run: zig test
