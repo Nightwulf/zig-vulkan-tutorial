@@ -8,5 +8,8 @@ jobs:
     steps:
       - name: Check out repository code
         uses: actions/checkout@v3
+      - name: Install dependencies
+      - run: apt update -qq
+      - run: apt install -y --no-install-recommends libsdl2-2.0-0 libsdl2-dev libcglm0 libcglm-dev libvulkan1 libvulkan-dev vulkan-validationlayers vulkan-validationlayers-dev
       - run: zig build --summary all
       - run: zig test
