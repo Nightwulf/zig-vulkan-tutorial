@@ -4,7 +4,7 @@ on: [push]
 
 jobs:
   Build-Zigvulkan:
-    runs-on: riscv-ubuntu-max
+    runs-on: archlinux-base
     steps:
       - name: Check out repository code
         uses: actions/checkout@v3
