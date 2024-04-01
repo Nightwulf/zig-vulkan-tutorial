@@ -98,6 +98,7 @@ pub fn main() !void {
         try drawFrame(globals);
         gfx.SDL_Delay(10);
     }
+    _ = gfx.vkDeviceWaitIdle(globals.device);
     cleanup(globals);
     arena.deinit();
 }
@@ -321,6 +322,7 @@ fn recordCommandBuffer(globals: Globals, image_index: u32) !void {
     const clear_color = gfx.VkClearValue{
         .color = gfx.VkClearColorValue{ .float32 = [4]f32{ 0.0, 0.0, 0.0, 1.0 } },
     };
+
     const render_pass_info = gfx.VkRenderPassBeginInfo{
         .sType = gfx.VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
         .renderPass = globals.render_pass,
@@ -394,7 +396,7 @@ fn createFramebuffers(device: gfx.VkDevice, render_pass: gfx.VkRenderPass, swap_
             .sType = gfx.VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO,
             .renderPass = render_pass,
             .attachmentCount = 1,
-            .pAttachments = swap_chain_image_views.ptr,
+            .pAttachments = &swap_chain_image_views[i],
             .width = swap_chain_details.swapChainExtent.width,
             .height = swap_chain_details.swapChainExtent.height,
             .layers = 1,
