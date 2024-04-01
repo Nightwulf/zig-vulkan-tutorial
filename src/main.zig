@@ -10,6 +10,8 @@ const gfx = @cImport({
 //     @cInclude("glm/mat4x4.hpp");
 // });
 
+const max_frames_in_flight = 2;
+
 const InitError = error{
     VulkanError,
     SDLError,
@@ -43,9 +45,9 @@ const PipelineDetails = struct {
 };
 
 const SyncObjects = struct {
-    image_available_semaphore: gfx.VkSemaphore,
-    render_finished_semaphore: gfx.VkSemaphore,
-    in_flight_fence: gfx.VkFence,
+    image_available_semaphore: [max_frames_in_flight]gfx.VkSemaphore,
+    render_finished_semaphore: [max_frames_in_flight]gfx.VkSemaphore,
+    in_flight_fence: [max_frames_in_flight]gfx.VkFence,
 };
 
 const Globals = struct {
@@ -69,10 +71,10 @@ const Globals = struct {
     graphics_pipeline: gfx.VkPipeline,
     frame_buffers: []gfx.VkFramebuffer,
     command_pool: gfx.VkCommandPool,
-    command_buffer: gfx.VkCommandBuffer,
-    image_available_semaphore: gfx.VkSemaphore,
-    render_finished_semaphore: gfx.VkSemaphore,
-    in_flight_fence: gfx.VkFence,
+    command_buffers: [max_frames_in_flight]gfx.VkCommandBuffer,
+    image_available_semaphores: [max_frames_in_flight]gfx.VkSemaphore,
+    render_finished_semaphores: [max_frames_in_flight]gfx.VkSemaphore,
+    in_flight_fences: [max_frames_in_flight]gfx.VkFence,
 };
 
 const enableDebugCallback: bool = true;
@@ -81,6 +83,7 @@ var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
 var allocator = arena.allocator();
 
 pub fn main() !void {
+    var current_frame: usize = 0;
     const globals = try init();
     gfx.SDL_RaiseWindow(globals.window);
 
@@ -95,7 +98,8 @@ pub fn main() !void {
                 else => running = true,
             }
         }
-        try drawFrame(globals);
+        try drawFrame(globals, current_frame);
+        current_frame = (current_frame + 1) % max_frames_in_flight;
         gfx.SDL_Delay(10);
     }
     _ = gfx.vkDeviceWaitIdle(globals.device);
@@ -103,18 +107,18 @@ pub fn main() !void {
     arena.deinit();
 }
 
-fn drawFrame(globals: Globals) !void {
-    _ = gfx.vkWaitForFences(globals.device, 1, &globals.in_flight_fence, gfx.VK_TRUE, std.math.maxInt(u64));
-    _ = gfx.vkResetFences(globals.device, 1, &globals.in_flight_fence);
+fn drawFrame(globals: Globals, frame: usize) !void {
+    _ = gfx.vkWaitForFences(globals.device, 1, &globals.in_flight_fences[frame], gfx.VK_TRUE, std.math.maxInt(u64));
+    _ = gfx.vkResetFences(globals.device, 1, &globals.in_flight_fences[frame]);
 
     var image_index: u32 = undefined;
-    _ = gfx.vkAcquireNextImageKHR(globals.device, globals.swapChain, std.math.maxInt(u64), globals.image_available_semaphore, null, &image_index);
-    _ = gfx.vkResetCommandBuffer(globals.command_buffer, 0);
+    _ = gfx.vkAcquireNextImageKHR(globals.device, globals.swapChain, std.math.maxInt(u64), globals.image_available_semaphores[frame], null, &image_index);
+    _ = gfx.vkResetCommandBuffer(globals.command_buffers[frame], 0);
 
-    try recordCommandBuffer(globals, image_index);
+    try recordCommandBuffer(globals, image_index, frame);
 
-    const wait_semaphores = [1]gfx.VkSemaphore{globals.image_available_semaphore};
-    const signal_semaphores = [1]gfx.VkSemaphore{globals.render_finished_semaphore};
+    const wait_semaphores = [1]gfx.VkSemaphore{globals.image_available_semaphores[frame]};
+    const signal_semaphores = [1]gfx.VkSemaphore{globals.render_finished_semaphores[frame]};
     const wait_stages = [1]u32{gfx.VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT};
     const submit_info = gfx.VkSubmitInfo{
         .sType = gfx.VK_STRUCTURE_TYPE_SUBMIT_INFO,
@@ -122,12 +126,12 @@ fn drawFrame(globals: Globals) !void {
         .pWaitSemaphores = &wait_semaphores,
         .pWaitDstStageMask = &wait_stages,
         .commandBufferCount = 1,
-        .pCommandBuffers = &globals.command_buffer,
+        .pCommandBuffers = &globals.command_buffers[frame],
         .signalSemaphoreCount = 1,
         .pSignalSemaphores = &signal_semaphores,
     };
 
-    if (gfx.vkQueueSubmit(globals.graphics_queue, 1, &submit_info, globals.in_flight_fence) != gfx.VK_SUCCESS) {
+    if (gfx.vkQueueSubmit(globals.graphics_queue, 1, &submit_info, globals.in_flight_fences[frame]) != gfx.VK_SUCCESS) {
         return InitError.VulkanError;
     }
 
@@ -255,7 +259,7 @@ fn init() !Globals {
 
     const command_pool = try createCommandPool(device, queue_indices[0].idx);
 
-    const command_buffer = try createCommandBuffer(device, command_pool);
+    const command_buffers = try createCommandBuffers(device, command_pool);
 
     const sync_objects = try createSyncObjects(device);
 
@@ -280,10 +284,10 @@ fn init() !Globals {
         .graphics_pipeline = pipeline_details.pipeline,
         .frame_buffers = frame_buffers,
         .command_pool = command_pool,
-        .command_buffer = command_buffer,
-        .image_available_semaphore = sync_objects.image_available_semaphore,
-        .render_finished_semaphore = sync_objects.render_finished_semaphore,
-        .in_flight_fence = sync_objects.in_flight_fence,
+        .command_buffers = command_buffers,
+        .image_available_semaphores = sync_objects.image_available_semaphore,
+        .render_finished_semaphores = sync_objects.render_finished_semaphore,
+        .in_flight_fences = sync_objects.in_flight_fence,
     };
 }
 
@@ -297,26 +301,30 @@ fn createSyncObjects(device: gfx.VkDevice) !SyncObjects {
         .flags = gfx.VK_FENCE_CREATE_SIGNALED_BIT,
     };
 
-    var image_available_semaphore: gfx.VkSemaphore = undefined;
-    var render_finished_semaphore: gfx.VkSemaphore = undefined;
-    var in_flight_fence: gfx.VkFence = undefined;
+    var image_available_semaphores: [max_frames_in_flight]gfx.VkSemaphore = undefined;
+    var render_finished_semaphores: [max_frames_in_flight]gfx.VkSemaphore = undefined;
+    var in_flight_fences: [2]gfx.VkFence = undefined;
 
-    if (gfx.vkCreateSemaphore(device, &semaphore_info, null, &image_available_semaphore) != gfx.VK_SUCCESS or
-        gfx.vkCreateSemaphore(device, &semaphore_info, null, &render_finished_semaphore) != gfx.VK_SUCCESS or
-        gfx.vkCreateFence(device, &fence_info, null, &in_flight_fence) != gfx.VK_SUCCESS)
-    {
-        return InitError.VulkanError;
+    var i: usize = 0;
+    while (i < max_frames_in_flight) {
+        if (gfx.vkCreateSemaphore(device, &semaphore_info, null, &image_available_semaphores[i]) != gfx.VK_SUCCESS or
+            gfx.vkCreateSemaphore(device, &semaphore_info, null, &render_finished_semaphores[i]) != gfx.VK_SUCCESS or
+            gfx.vkCreateFence(device, &fence_info, null, &in_flight_fences[i]) != gfx.VK_SUCCESS)
+        {
+            return InitError.VulkanError;
+        }
+        i += 1;
     }
-    return SyncObjects{ .image_available_semaphore = image_available_semaphore, .render_finished_semaphore = render_finished_semaphore, .in_flight_fence = in_flight_fence };
+    return SyncObjects{ .image_available_semaphore = image_available_semaphores, .render_finished_semaphore = render_finished_semaphores, .in_flight_fence = in_flight_fences };
 }
 
-fn recordCommandBuffer(globals: Globals, image_index: u32) !void {
+fn recordCommandBuffer(globals: Globals, image_index: u32, frame: usize) !void {
     const begin_info = gfx.VkCommandBufferBeginInfo{
         .sType = gfx.VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
         .flags = 0,
         .pInheritanceInfo = null,
     };
-    if (gfx.vkBeginCommandBuffer(globals.command_buffer, &begin_info) != gfx.VK_SUCCESS) {
+    if (gfx.vkBeginCommandBuffer(globals.command_buffers[frame], &begin_info) != gfx.VK_SUCCESS) {
         return InitError.VulkanError;
     }
     const clear_color = gfx.VkClearValue{
@@ -331,9 +339,9 @@ fn recordCommandBuffer(globals: Globals, image_index: u32) !void {
         .clearValueCount = 1,
         .pClearValues = &clear_color,
     };
-    gfx.vkCmdBeginRenderPass(globals.command_buffer, &render_pass_info, gfx.VK_SUBPASS_CONTENTS_INLINE);
+    gfx.vkCmdBeginRenderPass(globals.command_buffers[frame], &render_pass_info, gfx.VK_SUBPASS_CONTENTS_INLINE);
 
-    gfx.vkCmdBindPipeline(globals.command_buffer, gfx.VK_PIPELINE_BIND_POINT_GRAPHICS, globals.graphics_pipeline);
+    gfx.vkCmdBindPipeline(globals.command_buffers[frame], gfx.VK_PIPELINE_BIND_POINT_GRAPHICS, globals.graphics_pipeline);
 
     const viewport = gfx.VkViewport{
         .x = 0.0,
@@ -343,36 +351,36 @@ fn recordCommandBuffer(globals: Globals, image_index: u32) !void {
         .minDepth = 0.0,
         .maxDepth = 1.0,
     };
-    gfx.vkCmdSetViewport(globals.command_buffer, 0, 1, &viewport);
+    gfx.vkCmdSetViewport(globals.command_buffers[frame], 0, 1, &viewport);
 
     const scissor = gfx.VkRect2D{
         .offset = gfx.VkOffset2D{ .x = 0, .y = 0 },
         .extent = globals.swapChainExtent,
     };
-    gfx.vkCmdSetScissor(globals.command_buffer, 0, 1, &scissor);
+    gfx.vkCmdSetScissor(globals.command_buffers[frame], 0, 1, &scissor);
 
-    gfx.vkCmdDraw(globals.command_buffer, 3, 1, 0, 0);
+    gfx.vkCmdDraw(globals.command_buffers[frame], 3, 1, 0, 0);
 
-    gfx.vkCmdEndRenderPass(globals.command_buffer);
+    gfx.vkCmdEndRenderPass(globals.command_buffers[frame]);
 
-    if (gfx.vkEndCommandBuffer(globals.command_buffer) != gfx.VK_SUCCESS) {
+    if (gfx.vkEndCommandBuffer(globals.command_buffers[frame]) != gfx.VK_SUCCESS) {
         return InitError.VulkanError;
     }
 }
 
-fn createCommandBuffer(device: gfx.VkDevice, command_pool: gfx.VkCommandPool) !gfx.VkCommandBuffer {
+fn createCommandBuffers(device: gfx.VkDevice, command_pool: gfx.VkCommandPool) ![max_frames_in_flight]gfx.VkCommandBuffer {
     const alloc_info = gfx.VkCommandBufferAllocateInfo{
         .sType = gfx.VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
         .commandPool = command_pool,
         .level = gfx.VK_COMMAND_BUFFER_LEVEL_PRIMARY,
-        .commandBufferCount = 1,
+        .commandBufferCount = max_frames_in_flight,
     };
 
-    var command_buffer: gfx.VkCommandBuffer = undefined;
-    if (gfx.vkAllocateCommandBuffers(device, &alloc_info, &command_buffer) != gfx.VK_SUCCESS) {
+    var command_buffers: [2]gfx.VkCommandBuffer = undefined;
+    if (gfx.vkAllocateCommandBuffers(device, &alloc_info, &command_buffers) != gfx.VK_SUCCESS) {
         return InitError.VulkanError;
     }
-    return command_buffer;
+    return command_buffers;
 }
 
 fn createCommandPool(device: gfx.VkDevice, gfx_index: u32) !gfx.VkCommandPool {
@@ -915,9 +923,13 @@ fn DestroyDebugUtilMessengerExt(instance: gfx.VkInstance, callback: gfx.VkDebugU
 
 fn cleanup(globals: Globals) void {
     // cleanup vulkan
-    gfx.vkDestroySemaphore(globals.device, globals.image_available_semaphore, null);
-    gfx.vkDestroySemaphore(globals.device, globals.render_finished_semaphore, null);
-    gfx.vkDestroyFence(globals.device, globals.in_flight_fence, null);
+    var i: usize = 0;
+    while (i < max_frames_in_flight) {
+        gfx.vkDestroySemaphore(globals.device, globals.image_available_semaphores[i], null);
+        gfx.vkDestroySemaphore(globals.device, globals.render_finished_semaphores[i], null);
+        gfx.vkDestroyFence(globals.device, globals.in_flight_fences[i], null);
+        i += 1;
+    }
 
     gfx.vkDestroyCommandPool(globals.device, globals.command_pool, null);
     for (globals.frame_buffers) |framebuffer| {
