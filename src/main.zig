@@ -79,6 +79,8 @@ const Globals = struct {
 
 const enableDebugCallback: bool = true;
 
+var frame_buffer_resized = false;
+
 var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
 var allocator = arena.allocator();
 
@@ -95,13 +97,15 @@ pub fn main() !void {
                 gfx.SDL_QUIT => {
                     running = false;
                 },
-                gfx.SDL_WINDOWEVENT_RESIZED => {},
+                gfx.SDL_WINDOWEVENT_RESIZED => {
+                    frame_buffer_resized = true;
+                },
                 else => running = true,
             }
         }
         try drawFrame(&globals, current_frame);
         current_frame = (current_frame + 1) % max_frames_in_flight;
-        gfx.SDL_Delay(1000);
+        gfx.SDL_Delay(10);
     }
     _ = gfx.vkDeviceWaitIdle(globals.device);
     cleanup(globals);
@@ -110,7 +114,6 @@ pub fn main() !void {
 
 fn drawFrame(globals: *Globals, frame: usize) !void {
     _ = gfx.vkWaitForFences(globals.device, 1, &globals.in_flight_fences[frame], gfx.VK_TRUE, std.math.maxInt(u64));
-    _ = gfx.vkResetFences(globals.device, 1, &globals.in_flight_fences[frame]);
 
     var image_index: u32 = undefined;
     var result = gfx.vkAcquireNextImageKHR(globals.device, globals.swapChain, std.math.maxInt(u64), globals.image_available_semaphores[frame], null, &image_index);
@@ -262,7 +265,7 @@ fn init() !Globals {
         return InitError.VulkanError;
     }
 
-    const swap_chain = try createSwapChain(window, device, physical_device, surface, null);
+    const swap_chain = try createSwapChain(window, device, physical_device, surface);
 
     const swap_chain_images = try getSwapChainImages(device, swap_chain.swapChain);
 
@@ -338,15 +341,13 @@ fn createSyncObjects(device: gfx.VkDevice) !SyncObjects {
 fn recreateSwapChain(globals: *Globals) !void {
     _ = gfx.vkDeviceWaitIdle(globals.device);
 
-    const old_swap_chain = globals.swapChain;
-
     cleanupSwapChain(globals.*);
 
-    const swap_chain_details = try createSwapChain(globals.window, globals.device, globals.physical_device, globals.surface, old_swap_chain);
+    const swap_chain_details = try createSwapChain(globals.window, globals.device, globals.physical_device, globals.surface);
     globals.swapChainExtent = swap_chain_details.swapChainExtent;
     globals.swapChain = swap_chain_details.swapChain;
     globals.swapChainImageFormat = swap_chain_details.swapChainImageFormat;
-
+    globals.swapChainImages = try getSwapChainImages(globals.device, swap_chain_details.swapChain);
     globals.swapChainImageViews = try createImageViews(globals.device, swap_chain_details, globals.swapChainImages);
     globals.frame_buffers = try createFramebuffers(globals.device, globals.render_pass, swap_chain_details, globals.swapChainImageViews);
 }
@@ -695,7 +696,7 @@ fn getSwapChainImages(device: gfx.VkDevice, swap_chain: gfx.VkSwapchainKHR) ![]g
     return images;
 }
 
-fn createSwapChain(window: *gfx.SDL_Window, device: gfx.VkDevice, physical_device: gfx.VkPhysicalDevice, surface: gfx.VkSurfaceKHR, old_swap_chain: gfx.VkSwapchainKHR) !SwapChainDetails {
+fn createSwapChain(window: *gfx.SDL_Window, device: gfx.VkDevice, physical_device: gfx.VkPhysicalDevice, surface: gfx.VkSurfaceKHR) !SwapChainDetails {
     const swap_chain_support_details = try querySwapChainSupport(physical_device, surface);
     const surface_format = chooseSwapSurfaceFormat(swap_chain_support_details.formats);
     const present_mode = chooseSwapPresentMode(swap_chain_support_details.presentModes);
@@ -704,7 +705,6 @@ fn createSwapChain(window: *gfx.SDL_Window, device: gfx.VkDevice, physical_devic
     if (swap_chain_support_details.capabilities.maxImageCount > 0 and image_count > swap_chain_support_details.capabilities.maxImageCount) {
         image_count = swap_chain_support_details.capabilities.maxImageCount;
     }
-    std.debug.print("Old swap chain: {any}\n", .{old_swap_chain});
     var create_info = gfx.VkSwapchainCreateInfoKHR{
         .sType = gfx.VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR,
         .surface = surface,
@@ -718,7 +718,6 @@ fn createSwapChain(window: *gfx.SDL_Window, device: gfx.VkDevice, physical_devic
         .compositeAlpha = gfx.VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR,
         .presentMode = present_mode,
         .clipped = gfx.VK_TRUE,
-        .oldSwapchain = &old_swap_chain,
     };
 
     const indices = try findQueueFamilies(physical_device, surface);
@@ -736,7 +735,6 @@ fn createSwapChain(window: *gfx.SDL_Window, device: gfx.VkDevice, physical_devic
     if (gfx.vkCreateSwapchainKHR(device, &create_info, null, &swap_chain) != gfx.VK_SUCCESS) {
         return InitError.VulkanError;
     }
-    std.debug.print("New swap chain: {any}\n", .{swap_chain});
     return SwapChainDetails{ .swapChain = swap_chain, .swapChainExtent = extent, .swapChainImageFormat = surface_format.format };
 }
 
