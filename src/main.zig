@@ -1008,7 +1008,7 @@ fn getIndexForFamily(q: []QueueIndices, f: QueueType) u32 {
 }
 
 fn readFile(filename: []const u8) ![]align(4) u8 {
-    var path: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+    var path: [std.fs.max_path_bytes]u8 = undefined;
     const current = try std.posix.getcwd(&path);
     const absolute_path: []u8 = try std.mem.join(allocator, "/", &[_][]const u8{ current, filename });
     std.debug.print("{s}\n", .{absolute_path});

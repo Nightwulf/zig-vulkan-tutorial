@@ -6,17 +6,17 @@ pub fn build(b: *std.Build) void {
 
     const vertex_shader_compiler = b.addSystemCommand(&.{ "glslc", "-o" });
     const vert_shader_out = vertex_shader_compiler.addOutputFileArg("frag.spv");
-    vertex_shader_compiler.addFileArg(.{ .path = "src/shader.vert" });
+    vertex_shader_compiler.addFileArg(b.path("src/shader.vert" ));
     b.getInstallStep().dependOn(&b.addInstallBinFile(vert_shader_out, "vert.spv").step);
 
     const fragment_shader_compiler = b.addSystemCommand(&.{ "glslc", "-o" });
     const frag_shader_out = fragment_shader_compiler.addOutputFileArg("frag.spv");
-    fragment_shader_compiler.addFileArg(.{ .path = "src/shader.frag" });
+    fragment_shader_compiler.addFileArg(b.path("src/shader.frag" ));
     b.getInstallStep().dependOn(&b.addInstallBinFile(frag_shader_out, "frag.spv").step);
 
     const exe = b.addExecutable(.{
         .name = "zigvulkan",
-        .root_source_file = .{ .path = "src/main.zig" },
+        .root_source_file = b.path("src/main.zig"),
         .target = target,
         .optimize = optimize,
     });
