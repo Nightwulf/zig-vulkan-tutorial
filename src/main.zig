@@ -1014,7 +1014,7 @@ fn readFile(filename: []const u8) ![]align(4) u8 {
     std.debug.print("{s}\n", .{absolute_path});
     const file = try std.fs.openFileAbsolute(absolute_path, std.fs.File.OpenFlags{ .mode = .read_only });
     const stat = try file.stat();
-    const outbuf: []align(4) u8 = try allocator.allocWithOptions(u8, stat.size, 4, null);
+    const outbuf: []align(4) u8 = try allocator.allocWithOptions(u8, stat.size, std.mem.Alignment.@"4", null);
     _ = try file.readAll(outbuf);
     file.close();
     return outbuf;
