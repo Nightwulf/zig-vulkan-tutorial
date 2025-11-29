@@ -198,7 +198,7 @@ fn init() !Globals {
     const extension_names = try allocator.alloc([*c]const u8, sdl_extension_count);
     _ = gfx.SDL_Vulkan_GetInstanceExtensions(window, &sdl_extension_count, extension_names.ptr);
 
-    var final_extension_names = std.ArrayList([*c]const u8).init(allocator);
+    var final_extension_names = std.array_list.Managed([*c]const u8).init(allocator);
     try final_extension_names.appendSlice(extension_names);
 
     if (enableDebugCallback) {
@@ -802,7 +802,7 @@ fn createLogicalDevice(physical_device: gfx.VkPhysicalDevice, queue_indices: []Q
     for (queue_indices, 0..) |idx, i| {
         unique_queue_families[i] = idx.idx;
     }
-    var queue_create_infos = std.ArrayList(gfx.VkDeviceQueueCreateInfo).init(allocator);
+    var queue_create_infos = std.array_list.Managed(gfx.VkDeviceQueueCreateInfo).init(allocator);
     var queue_priority: f32 = 1.0;
     for (unique_queue_families) |idx| {
         const queue_create_info = gfx.VkDeviceQueueCreateInfo{
@@ -831,10 +831,10 @@ fn createLogicalDevice(physical_device: gfx.VkPhysicalDevice, queue_indices: []Q
 }
 
 fn findQueueFamilies(physical_device: gfx.VkPhysicalDevice, surface: gfx.VkSurfaceKHR) ![]QueueIndices {
-    var queue_indices = [_]QueueIndices{
-        QueueIndices{ .idx = 0, .type = QueueType.Graphics },
-        QueueIndices{ .idx = 0, .type = QueueType.Presentation },
-    };
+    var queue_indices = try allocator.alloc(QueueIndices, 2);
+    queue_indices[0] = QueueIndices{ .idx = 0, .type = QueueType.Graphics };
+    queue_indices[1] = QueueIndices{ .idx = 0, .type = QueueType.Presentation };
+
     var queue_family_count: u32 = 0;
     gfx.vkGetPhysicalDeviceQueueFamilyProperties(physical_device, &queue_family_count, null);
     const queue_families: []gfx.VkQueueFamilyProperties = try allocator.alloc(gfx.VkQueueFamilyProperties, queue_family_count);
@@ -862,7 +862,7 @@ fn findQueueFamilies(physical_device: gfx.VkPhysicalDevice, surface: gfx.VkSurfa
     if (!found_gfx or !found_present) {
         return InitError.VulkanError;
     }
-    return &queue_indices;
+    return queue_indices;
 }
 
 fn getPresentFamilyIndex(device: gfx.VkPhysicalDevice, surface: gfx.VkSurfaceKHR, graphical_idx: u32) !u32 {
@@ -929,7 +929,7 @@ fn checkDeviceExtensionSupport(device: gfx.VkPhysicalDevice) !bool {
     return found_extensions == needed_extensions.len;
 }
 
-fn debugCallback(messageSeverity: gfx.VkDebugUtilsMessageSeverityFlagBitsEXT, messageType: gfx.VkDebugUtilsMessageTypeFlagsEXT, pCallbackData: [*c]const gfx.VkDebugUtilsMessengerCallbackDataEXT, pUserData: ?*anyopaque) callconv(.C) gfx.VkBool32 {
+fn debugCallback(messageSeverity: gfx.VkDebugUtilsMessageSeverityFlagBitsEXT, messageType: gfx.VkDebugUtilsMessageTypeFlagsEXT, pCallbackData: [*c]const gfx.VkDebugUtilsMessengerCallbackDataEXT, pUserData: ?*anyopaque) callconv(.c) gfx.VkBool32 {
     std.debug.print("validation layer: {s}\n", .{pCallbackData.*.pMessage});
     _ = messageSeverity;
     _ = messageType;
@@ -1014,8 +1014,8 @@ fn readFile(filename: []const u8) ![]align(4) u8 {
     std.debug.print("{s}\n", .{absolute_path});
     const file = try std.fs.openFileAbsolute(absolute_path, std.fs.File.OpenFlags{ .mode = .read_only });
     const stat = try file.stat();
-    const outbuf: []align(4) u8 = try allocator.allocWithOptions(u8, stat.size, 4, null);
-    _ = try file.readAll(outbuf);
+    const outbuf: []align(4) u8 = try allocator.allocWithOptions(u8, stat.size, std.mem.Alignment.@"4", null);
+    _ = try file.read(outbuf);
     file.close();
     return outbuf;
 }
